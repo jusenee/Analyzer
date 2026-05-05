@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Spark Analyzer Detail + Main v2</title>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<style>
+*{box-sizing:border-box}
+body{margin:0;padding:14px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f6f7fb;color:#111827}
+.wrap{max-width:500px;margin:0 auto 40px}
+h1{font-size:24px;text-align:center;margin:8px 0 2px}
+h2{font-size:20px;margin:0 0 12px}
+.note,.tiny{font-size:13px;color:#64748b;text-align:center}
+.card{background:#fff;border-radius:22px;padding:16px;margin:14px 0;box-shadow:0 2px 10px rgba(0,0,0,.06)}
+.upload{display:block;border:2px dashed #111827;border-radius:18px;padding:26px;text-align:center;font-weight:1000;background:#111827;color:white;font-size:22px}
+input[type=file]{display:none}
+img{width:100%;max-height:320px;object-fit:contain;border-radius:16px;background:#eef2f7;margin-top:12px}
+.grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+label.small{font-size:11px;font-weight:900;color:#475569;text-transform:uppercase}
+input[type=number]{width:100%;padding:12px 10px;border:1px solid #cbd5e1;border-radius:14px;font-size:18px;font-weight:900;margin-top:4px}
+button{width:100%;border:0;border-radius:16px;padding:15px;font-weight:1000;font-size:16px;background:#111827;color:white;margin-top:10px;cursor:pointer;touch-action:manipulation;position:relative;z-index:20}
+.secondary{background:#e5e7eb;color:#111827}
+.danger{background:#fee2e2;color:#991b1b}
+.green{background:#16a34a;color:white}
+.red{background:#dc2626;color:white}
+.result{border:3px solid;position:sticky;top:0;z-index:5;pointer-events:none}
+.take{background:#ecfdf5;border-color:#86efac;color:#065f46}
+.decline{background:#fef2f2;border-color:#fecaca;color:#991b1b}
+.soft{background:#fffbeb;border-color:#facc15;color:#92400e}
+.verdict{font-size:38px;font-weight:1000;margin:0 0 12px;line-height:1}
+.metrics{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.summaryMetrics{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+.metric{background:rgba(255,255,255,.75);border-radius:16px;padding:12px}
+.metric .k{font-size:11px;font-weight:900;opacity:.75;text-transform:uppercase}
+.metric .v{font-size:20px;font-weight:1000;margin-top:2px}
+.status{text-align:center;font-weight:900;color:#334155}
+.ocr{max-height:100px;overflow:auto;white-space:pre-wrap;font-size:12px;background:#f1f5f9;padding:10px;border-radius:14px}
+.historyItem{cursor:pointer;background:#f8fafc;border-radius:14px;padding:12px;margin:8px 0;font-size:14px;border:1px solid #e5e7eb}
+.badge{display:inline-block;padding:3px 8px;border-radius:999px;font-size:12px;font-weight:900;margin-right:5px}
+.bTake{background:#dcfce7;color:#166534}.bSkip{background:#fee2e2;color:#991b1b}.bVerdict{background:#e0e7ff;color:#3730a3}
+.detailOverlay{position:fixed;inset:0;background:rgba(15,23,42,.62);z-index:99;display:none;align-items:flex-end}
+.detailPanel{width:100%;max-height:88vh;overflow:auto;background:white;border-radius:22px 22px 0 0;padding:16px}
+.detailImg{width:100%;max-height:430px;object-fit:contain;background:#eef2f7;border-radius:16px;margin:12px 0}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>Spark Analyzer</h1>
+<p class="note">Works with detail screenshots and top main-page screenshots. Now with Soft Yes + fixed logging.</p>
+
+<div id="result" class="card result" style="display:none"></div>
+
+<div class="card">
+<label class="upload">📸 Analyze Screenshot<input id="file" type="file" accept="image/*"></label>
+<p class="tiny">Best: detail page. Also supports top visible main-page offer.</p>
+<img id="preview" style="display:none">
+<p id="status" class="status"></p>
+<div id="ocr" class="ocr" style="display:none"></div>
+</div>
+
+<div class="card">
+<h2>Check / Fix Details</h2>
+<div class="grid">
+<div><label class="small">Pay $</label><input id="pay" type="number" step="0.01"></div>
+<div><label class="small">Miles</label><input id="miles" type="number" step="0.1"></div>
+<div><label class="small">Total Mins</label><input id="minutes" type="number" step="1"></div>
+</div>
+<div class="grid" style="margin-top:8px">
+<div><label class="small">Stops</label><input id="stops" type="number" step="1"></div>
+<div><label class="small">Items</label><input id="items" type="number" step="1"></div>
+<div></div>
+</div>
+<button type="button" onclick="analyze()">Recalculate</button>
+<button type="button" onclick="clearForNext()" class="secondary">Ready for Next Screenshot</button>
+</div>
+
+<div class="card">
+<h2>Did you take this order?</h2>
+<div class="grid2">
+<button type="button" class="green" onclick="logOrder('TAKEN')">Yes, I took it</button>
+<button type="button" class="red" onclick="logOrder('SKIPPED')">No, I skipped it</button>
+</div>
+</div>
+
+<div class="card">
+<h2>My Order Tracker</h2>
+<div id="summary" class="summaryMetrics"></div>
+<button onclick="exportHistory()" class="secondary">Copy History CSV</button>
+<button onclick="clearHistory()" class="danger">Clear History</button>
+<div id="history"></div>
+</div>
+</div>
+
+<div id="detailOverlay" class="detailOverlay" onclick="closeDetail(event)">
+<div class="detailPanel" onclick="event.stopPropagation()">
+<div id="detailContent"></div>
+<button onclick="hideDetail()">Close</button>
+</div>
+</div>
+
+<script>
+let currentResult=null,currentImageData=null;
+const el=id=>document.getElementById(id);
+const money=n=>"$"+Number(n).toFixed(2);
+
+el("file").addEventListener("change",async e=>{
+ const file=e.target.files&&e.target.files[0]; if(!file)return;
+ await processFile(file); e.target.value="";
+});
+["pay","miles","minutes","stops","items"].forEach(id=>el(id).addEventListener("input",analyze));
+
+function fileToDataURL(file){return new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=rej;r.readAsDataURL(file)})}
+
+async function processFile(file){
+ clearFieldsOnly();
+ currentImageData=await fileToDataURL(file);
+ const url=URL.createObjectURL(file);
+ el("preview").src=url; el("preview").style.display="block";
+ el("ocr").style.display="none"; el("ocr").textContent="";
+ el("status").textContent="Reading screenshot...";
+ try{
+  const {data}=await Tesseract.recognize(file,"eng");
+  const text=data.text||"";
+  el("ocr").style.display="block"; el("ocr").textContent=text || "No text detected.";
+  const mode=fillFromText(text);
+  el("status").textContent=mode ? `Done (${mode}). Verify fields if needed.` : "Could not read all fields. Fix manually, then tap Recalculate.";
+  analyze();
+  window.scrollTo({top:0,behavior:"smooth"});
+ }catch(err){
+  el("status").textContent="OCR failed. Type the numbers manually.";
+ }
+}
+
+function clean(s){
+ return String(s||"")
+  .replace(/[•·|]/g," • ")
+  .replace(/[–—-]/g," • ")
+  .replace(/,/g," , ")
+  .replace(/\s+/g," ")
+  .replace(/\bO\b/g,"0")
+  .trim();
+}
+
+function formatDuration(totalMinutes){
+ const mins=Math.round(Number(totalMinutes||0));
+ if(mins<60)return `${mins} mins`;
+ const h=Math.floor(mins/60),m=mins%60;
+ return m?`${h} ${h===1?"hr":"hrs"} ${m} mins`:`${h} ${h===1?"hr":"hrs"}`;
+}
+
+function parseTime(s){
+ s=clean(s).toLowerCase();
+ let m=s.match(/(\d+)\s*(?:hr|hrs|hour|hours)\s*,?\s*(\d+)\s*(?:min|mins|minute|minutes)/i);
+ if(m)return parseInt(m[1])*60+parseInt(m[2]);
+ m=s.match(/(\d+)\s*(?:hr|hrs|hour|hours)\b/i);
+ if(m)return parseInt(m[1])*60;
+ m=s.match(/(\d+)\s*(?:min|mins|minute|minutes)\b/i);
+ if(m)return parseInt(m[1]);
+ return null;
+}
+
+function parseRoute(text){
+ const s=clean(text);
+ let m=s.match(/(\d+)\s*stops?.{0,110}?(\d+(?:\.\d+)?)\s*miles?.{0,110}?((?:\d+\s*(?:hr|hrs|hour|hours)\s*,?\s*)?(?:\d+\s*(?:min|mins|minute|minutes))|\d+\s*(?:hr|hrs|hour|hours))/i);
+ if(!m)m=s.match(/(\d+)\s*stops?.{0,110}?(\d+(?:\.\d+)?)\s*mile\b.{0,110}?((?:\d+\s*(?:hr|hrs|hour|hours)\s*,?\s*)?(?:\d+\s*(?:min|mins|minute|minutes))|\d+\s*(?:hr|hrs|hour|hours))/i);
+ if(!m)return null;
+ const mins=parseTime(m[3]);
+ if(mins==null)return null;
+ return {stops:parseInt(m[1]),miles:parseFloat(m[2]),minutes:mins};
+}
+
+function parseItems(text){
+ const s=clean(text);
+ const item=s.match(/(\d+)\s*items?\s*\(\s*\d+\s*qty\s*\)/i) || s.match(/(\d+)\s*items?\b/i);
+ return item ? parseInt(item[1]) : null;
+}
+
+function parseDetailPage(s){
+ if(!/estimated\s+total/i.test(s)) return null;
+
+ const payMatch=s.match(/estimated\s+total.{0,140}?\$\s*(\d{1,3}\.\d{2})/i);
+ const pay=payMatch ? parseFloat(payMatch[1]) : null;
+ const route=parseRoute(s);
+ const items=parseItems(s);
+
+ if(pay!=null) el("pay").value=pay.toFixed(2);
+ if(route){
+   el("stops").value=route.stops;
+   el("miles").value=route.miles;
+   el("minutes").value=route.minutes;
+ }
+ if(items!=null) el("items").value=items;
+
+ return pay!=null || route ? "detail page" : null;
+}
+
+function getTopMainCardText(s){
+ // Main-page rule: first $XX.XX starts the top visible offer. Cut before the next $XX.XX.
+ const priceMatches=[...s.matchAll(/\$\s*\d{1,3}\.\d{2}/g)];
+ if(!priceMatches.length) return "";
+ const start=priceMatches[0].index;
+ const end=priceMatches[1] ? priceMatches[1].index : s.length;
+ return s.slice(start,end);
+}
+
+function parseMainPage(s){
+ const card=getTopMainCardText(s);
+ if(!card) return null;
+
+ const payMatch=card.match(/\$\s*(\d{1,3}\.\d{2})/);
+ const pay=payMatch ? parseFloat(payMatch[1]) : null;
+ const route=parseRoute(card);
+ const items=parseItems(card);
+
+ if(pay!=null) el("pay").value=pay.toFixed(2);
+ if(route){
+   el("stops").value=route.stops;
+   el("miles").value=route.miles;
+   el("minutes").value=route.minutes;
+ }
+ if(items!=null) el("items").value=items;
+
+ return pay!=null || route ? "main page" : null;
+}
+
+function fillFromText(text){
+ const s=clean(text);
+
+ // Prefer detail parsing when Estimated Total exists.
+ const detail=parseDetailPage(s);
+ if(detail) return detail;
+
+ const main=parseMainPage(s);
+ if(main) return main;
+
+ return null;
+}
+
+function analyze(){
+ const pay=parseFloat(el("pay").value),miles=parseFloat(el("miles").value),minutes=parseFloat(el("minutes").value),stops=parseFloat(el("stops").value||"0"),items=parseFloat(el("items").value||"0");
+
+ if(!pay||!miles||!minutes){
+   currentResult=null;
+   el("result").className="card result decline";
+   el("result").style.display="block";
+   el("result").innerHTML=`<p class="verdict">CHECK FIELDS</p><div class="metrics">
+     <div class="metric"><div class="k">Pay</div><div class="v">${pay?money(pay):"Missing"}</div></div>
+     <div class="metric"><div class="k">Miles</div><div class="v">${miles?miles:"Missing"}</div></div>
+     <div class="metric"><div class="k">Time</div><div class="v">${minutes?formatDuration(minutes):"Missing"}</div></div>
+     <div class="metric"><div class="k">Fix</div><div class="v">Manual</div></div>
+   </div>`;
+   return null;
+ }
+
+ const rtMiles=miles*2;
+ const rtPerMile=pay/rtMiles;
+ const hourly=pay/(minutes/60);
+ const minPay=miles*4;
+
+ const passMiles=pay>=minPay;
+ const passTime=hourly>=30;
+ const local=miles<=5;
+
+ let verdict="DECLINE",cls="decline";
+
+ // TAKE = ideal by your hard rules
+ if(passMiles&&passTime&&local){
+   verdict="TAKE";
+   cls="take";
+ }
+ // SOFT YES = profitable, but not perfect
+ else if(passMiles && hourly>=30 && miles<=7){
+   verdict="SOFT YES";
+   cls="soft";
+ }
+ else if(hourly>=35 && miles<=5){
+   verdict="SOFT YES";
+   cls="soft";
+ }
+
+ currentResult={date:new Date().toLocaleString(),pay,miles,minutes,stops,items,rtMiles,rtPerMile,hourly,verdict,screenshot:currentImageData};
+
+ el("result").className="card result "+cls;
+ el("result").style.display="block";
+ el("result").innerHTML=`<p class="verdict">${verdict}</p><div class="metrics">
+ <div class="metric"><div class="k">RT Miles</div><div class="v">${rtMiles.toFixed(1)}</div></div>
+ <div class="metric"><div class="k">RT $/Mile</div><div class="v">${money(rtPerMile)}</div></div>
+ <div class="metric"><div class="k">Hourly</div><div class="v">${money(hourly)}/hr</div></div>
+ <div class="metric"><div class="k">Time</div><div class="v">${formatDuration(minutes)}</div></div>
+ </div>`;
+ return currentResult;
+}
+
+function getHistory(){try{return JSON.parse(localStorage.getItem("sparkHistoryDetailMain")||"[]")}catch{return[]}}
+function saveHistory(h){localStorage.setItem("sparkHistoryDetailMain",JSON.stringify(h));renderHistory()}
+
+function buildResultFromCurrentFields(){
+ const result = analyze();
+ return result || currentResult;
+}
+
+function logOrder(status){
+ const result=buildResultFromCurrentFields();
+ if(!result){
+   alert("Fill pay, miles, and time first.");
+   return;
+ }
+ const h=getHistory();
+ h.unshift({...result,status,id:Date.now()});
+ saveHistory(h);
+
+ // Give immediate confirmation so you know the tap worked.
+ el("status").textContent = status === "TAKEN" ? "Saved: Took this order." : "Saved: Skipped this order.";
+ setTimeout(()=>clearForNext(), 450);
+}
+
+function renderHistory(){
+ const h=getHistory(),taken=h.filter(x=>x.status==="TAKEN"),skipped=h.filter(x=>x.status==="SKIPPED");
+ const avg=taken.length?taken.reduce((a,b)=>a+b.hourly,0)/taken.length:0,total=taken.reduce((a,b)=>a+b.pay,0);
+ el("summary").innerHTML=`<div class="metric"><div class="k">Analyzed</div><div class="v">${h.length}</div></div><div class="metric"><div class="k">Taken</div><div class="v">${taken.length}</div></div><div class="metric"><div class="k">Skipped</div><div class="v">${skipped.length}</div></div><div class="metric"><div class="k">Taken Pay</div><div class="v">${money(total)}</div></div><div class="metric"><div class="k">Avg Taken/hr</div><div class="v">${taken.length?money(avg):"$0.00"}</div></div><div class="metric"><div class="k">Take Rate</div><div class="v">${h.length?Math.round(taken.length/h.length*100):0}%</div></div>`;
+ el("history").innerHTML=h.slice(0,25).map((x,i)=>`<div class="historyItem" onclick="showDetail(${i})"><span class="badge ${x.status==="TAKEN"?"bTake":"bSkip"}">${x.status}</span><span class="badge bVerdict">${x.verdict}</span><b>${money(x.pay)}</b> • ${x.miles} mi • ${formatDuration(x.minutes)} • ${money(x.hourly)}/hr<div class="tiny">Tap for screenshot + breakdown</div><div class="tiny">${x.date}</div></div>`).join("");
+}
+function showDetail(i){
+ const x=getHistory()[i]; if(!x)return;
+ const img=x.screenshot?`<img class="detailImg" src="${x.screenshot}">`:`<div class="card">No screenshot saved.</div>`;
+ el("detailContent").innerHTML=`<h2>Trip Breakdown</h2><p><span class="badge ${x.status==="TAKEN"?"bTake":"bSkip"}">${x.status}</span><span class="badge bVerdict">${x.verdict}</span></p>${img}<div class="metrics">
+ <div class="metric"><div class="k">Pay</div><div class="v">${money(x.pay)}</div></div>
+ <div class="metric"><div class="k">Time</div><div class="v">${formatDuration(x.minutes)}</div></div>
+ <div class="metric"><div class="k">Hourly</div><div class="v">${money(x.hourly)}/hr</div></div>
+ <div class="metric"><div class="k">Miles</div><div class="v">${Number(x.miles).toFixed(1)}</div></div>
+ <div class="metric"><div class="k">RT Miles</div><div class="v">${Number(x.rtMiles).toFixed(1)}</div></div>
+ <div class="metric"><div class="k">RT $/Mile</div><div class="v">${money(x.rtPerMile)}</div></div>
+ <div class="metric"><div class="k">Stops</div><div class="v">${x.stops||"—"}</div></div>
+ <div class="metric"><div class="k">Items</div><div class="v">${x.items||"—"}</div></div>
+ </div><p class="tiny">${x.date}</p>`;
+ el("detailOverlay").style.display="flex";
+}
+function hideDetail(){el("detailOverlay").style.display="none"}
+function closeDetail(e){if(e.target.id==="detailOverlay")hideDetail()}
+function exportHistory(){
+ const h=getHistory(); if(!h.length){alert("No history yet.");return}
+ const rows=[["date","status","verdict","pay","miles","minutes","stops","items","hourly","rtMiles","rtPerMile"],...h.map(x=>[x.date,x.status,x.verdict,x.pay,x.miles,x.minutes,x.stops,x.items,x.hourly.toFixed(2),x.rtMiles.toFixed(1),x.rtPerMile.toFixed(2)])];
+ const csv=rows.map(r=>r.map(v=>`"${String(v??"").replace(/"/g,'""')}"`).join(",")).join("\n");
+ navigator.clipboard.writeText(csv).then(()=>alert("History CSV copied."));
+}
+function clearHistory(){if(confirm("Clear all saved order history?")){localStorage.removeItem("sparkHistoryDetailMain");renderHistory()}}
+function clearFieldsOnly(){["pay","miles","minutes","stops","items"].forEach(id=>el(id).value="");currentResult=null;currentImageData=null}
+function clearForNext(){clearFieldsOnly();el("preview").style.display="none";el("ocr").style.display="none";el("ocr").textContent="";el("status").textContent="";el("result").style.display="none";el("file").value=""}
+renderHistory();
+</script>
+</body>
+</html>
