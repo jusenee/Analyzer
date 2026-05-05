@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Spark Screenshot Analyzer v2</title>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin:0; padding:18px; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; background:#f6f7fb; color:#111827; }
+    .wrap { max-width:480px; margin:0 auto; }
+    h1 { font-size:25px; margin:8px 0 4px; text-align:center; }
+    p { color:#4b5563; line-height:1.35; }
+    .card { background:white; border-radius:18px; padding:16px; margin:14px 0; box-shadow:0 2px 10px rgba(0,0,0,.06); }
+    .upload { display:block; border:2px dashed #cbd5e1; border-radius:18px; padding:24px; text-align:center; font-weight:800; background:#fff; }
+    input[type=file] { display:none; }
+    img { width:100%; max-height:330px; object-fit:contain; border-radius:14px; background:#eef2f7; margin-top:12px; }
+    .grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+    label.small { font-size:12px; font-weight:800; color:#475569; }
+    input[type=number], input[type=text] { width:100%; padding:12px; border:1px solid #cbd5e1; border-radius:12px; font-size:16px; margin-top:4px; }
+    button { width:100%; border:0; border-radius:14px; padding:14px; font-weight:900; font-size:16px; background:#111827; color:white; margin-top:10px; }
+    .secondary { background:#e5e7eb; color:#111827; }
+    .toggle { background:#e5e7eb; color:#111827; }
+    .toggle.on { background:#fde68a; color:#111827; }
+    .result { border:2px solid; }
+    .take { background:#ecfdf5; border-color:#86efac; color:#065f46; }
+    .soft { background:#fffbeb; border-color:#fde68a; color:#92400e; }
+    .decline { background:#fef2f2; border-color:#fecaca; color:#991b1b; }
+    .verdict { font-size:32px; font-weight:950; margin:0; }
+    .metrics { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:12px; }
+    .metric { background:rgba(255,255,255,.72); border-radius:14px; padding:12px; }
+    .metric .k { font-size:12px; opacity:.75; font-weight:800; }
+    .metric .v { font-size:18px; font-weight:950; margin-top:2px; }
+    .ocr { max-height:120px; overflow:auto; white-space:pre-wrap; font-size:12px; background:#f1f5f9; padding:10px; border-radius:12px; }
+    .note { font-size:13px; color:#64748b; text-align:center; }
+    .status { font-size:14px; font-weight:800; text-align:center; color:#334155; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Spark Screenshot Analyzer v2</h1>
+  <p class="note">Upload each screenshot separately. If OCR misses anything, edit the fields and tap Analyze.</p>
+
+  <div class="card">
+    <label class="upload">
+      📸 Upload New Screenshot
+      <input id="file" type="file" accept="image/*" />
+    </label>
+    <img id="preview" style="display:none;" />
+    <p id="status" class="status"></p>
+    <div id="ocr" class="ocr" style="display:none;"></div>
+  </div>
+
+  <div class="card">
+    <h2>Offer Details</h2>
+    <div class="grid">
+      <div><label class="small">Pay $</label><input id="pay" type="number" step="0.01" placeholder="21.83"></div>
+      <div><label class="small">Miles one-way</label><input id="miles" type="number" step="0.1" placeholder="2.2"></div>
+      <div><label class="small">Minutes</label><input id="minutes" type="number" step="1" placeholder="25"></div>
+      <div><label class="small">Stops</label><input id="stops" type="number" step="1" placeholder="2"></div>
+      <div><label class="small">Items</label><input id="items" type="number" step="1" placeholder="12"></div>
+      <button id="apt" class="toggle" type="button">Apartment: No</button>
+    </div>
+    <button onclick="analyze()">Analyze</button>
+    <button onclick="clearForNext()" class="secondary">Clear for Next Order</button>
+  </div>
+
+  <div id="result" class="card result" style="display:none;"></div>
+</div>
+
+<script>
+let apartment = false;
+let lastFile = null;
+const el = id => document.getElementById(id);
+const money = n => "$" + Number(n).toFixed(2);
+
+el("apt").onclick = function() {
+  apartment = !apartment;
+  updateAptButton();
+  analyze();
+};
+
+["pay","miles","minutes","stops","items"].forEach(id => el(id).addEventListener("input", analyze));
+
+el("file").addEventListener("change", async (e) => {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+  lastFile = file;
+  await processFile(file);
+  e.target.value = ""; // lets iPhone upload another screenshot right after
+});
+
+async function processFile(file) {
+  clearFieldsOnly();
+  const url = URL.createObjectURL(file);
+  el("preview").src = url;
+  el("preview").style.display = "block";
+  el("result").style.display = "none";
+  el("ocr").style.display = "none";
+  el("ocr").textContent = "";
+  el("status").textContent = "Reading screenshot... wait until this finishes.";
+
+  try {
+    const { data } = await Tesseract.recognize(file, "eng");
+    const text = data.text || "";
+    el("ocr").style.display = "block";
+    el("ocr").textContent = text || "No text detected.";
+    fillFromText(text);
+    el("status").textContent = "Done. Check fields, then use the verdict below.";
+    analyze();
+  } catch (err) {
+    el("status").textContent = "OCR failed. Type pay/miles/minutes manually and tap Analyze.";
+  }
+}
+
+function fillFromText(text) {
+  const cleaned = text.replace(/,/g, " ").replace(/\s+/g, " ");
+
+  // Highest dollar amount is usually Estimated Total
+  const payMatches = [...cleaned.matchAll(/\$\s?(\d+(?:\.\d{1,2})?)/g)].map(m => parseFloat(m[1])).filter(n => n > 0);
+  if (payMatches.length) el("pay").value = Math.max(...payMatches).toFixed(2);
+
+  // Prefer header format like "3 stops • 3.6 miles • 41 mins"
+  const header = cleaned.match(/(\d+)\s?stops?.{0,10}?(\d+(?:\.\d+)?)\s?miles?.{0,10}?(\d+)\s?mins?/i);
+  if (header) {
+    el("stops").value = header[1];
+    el("miles").value = header[2];
+    el("minutes").value = header[3];
+  } else {
+    const mileMatch = cleaned.match(/(\d+(?:\.\d+)?)\s?(?:mi|mile|miles)\b/i);
+    const minMatch = cleaned.match(/(\d+)\s?(?:min|mins|minute|minutes)\b/i);
+    const stopMatch = cleaned.match(/(\d+)\s?(?:stop|stops)\b/i);
+    if (mileMatch) el("miles").value = mileMatch[1];
+    if (minMatch) el("minutes").value = minMatch[1];
+    if (stopMatch) el("stops").value = stopMatch[1];
+  }
+
+  const itemMatches = [...cleaned.matchAll(/(\d+)\s?(?:item|items)\b/ig)].map(m => parseInt(m[1],10)).filter(n => n > 0);
+  if (itemMatches.length) el("items").value = Math.max(...itemMatches);
+
+  apartment = /apartment|apt|unit|building|floor/i.test(cleaned);
+  updateAptButton();
+}
+
+function updateAptButton() {
+  el("apt").textContent = "Apartment: " + (apartment ? "Yes" : "No");
+  el("apt").className = "toggle" + (apartment ? " on" : "");
+}
+
+function analyze() {
+  const pay = parseFloat(el("pay").value);
+  const miles = parseFloat(el("miles").value);
+  const minutes = parseFloat(el("minutes").value);
+  const stops = parseFloat(el("stops").value || "0");
+  const items = parseFloat(el("items").value || "0");
+
+  if (!pay || !miles || !minutes) {
+    el("result").style.display = "none";
+    return;
+  }
+
+  const roundTripMiles = miles * 2;
+  const minPayByMiles = miles * 4;
+  const oneWayPerMile = pay / miles;
+  const roundTripPerMile = pay / roundTripMiles;
+  const hourly = pay / (minutes / 60);
+  const maxMinutesFor30 = pay * 2;
+
+  const passesMileage = pay >= minPayByMiles;
+  const passesHourly = hourly >= 30;
+  const local = miles <= 5;
+  const quick = minutes <= 25;
+  const softDistance = miles > 5 && miles <= 7 && quick && pay >= 20;
+  const risky = apartment || stops >= 3 || items >= 40;
+
+  let verdict = "DECLINE", cls = "decline", reason = "Fails your pay, time, or distance rules.";
+
+  if (passesMileage && passesHourly && local && !risky) {
+    verdict = "TAKE"; cls = "take";
+    reason = "Meets your round-trip $2/mile rule, hits $30/hr+, and stays local.";
+  } else if (passesMileage && passesHourly && (local || softDistance)) {
+    verdict = "SOFT YES"; cls = "soft";
+    reason = risky ? "Money works, but stops/items/apartment risk may slow you down." : "Money works, but it is slightly outside your ideal zone.";
+  } else if (hourly >= 30 && quick && pay >= 15) {
+    verdict = "SOFT YES"; cls = "soft";
+    reason = "Hourly pace is good, but it may not fully satisfy your round-trip mileage rule.";
+  }
+
+  el("result").className = "card result " + cls;
+  el("result").style.display = "block";
+  el("result").innerHTML = `
+    <p class="verdict">${verdict}</p>
+    <p><b>${reason}</b></p>
+    <div class="metrics">
+      <div class="metric"><div class="k">Hourly</div><div class="v">${money(hourly)}/hr</div></div>
+      <div class="metric"><div class="k">One-way $/mile</div><div class="v">${money(oneWayPerMile)}</div></div>
+      <div class="metric"><div class="k">Round-trip $/mile</div><div class="v">${money(roundTripPerMile)}</div></div>
+      <div class="metric"><div class="k">Round-trip miles</div><div class="v">${roundTripMiles.toFixed(1)} mi</div></div>
+      <div class="metric"><div class="k">Your mile minimum</div><div class="v">${money(minPayByMiles)}</div></div>
+      <div class="metric"><div class="k">Max mins for $30/hr</div><div class="v">${maxMinutesFor30.toFixed(0)} min</div></div>
+    </div>
+    <p><b>Mental check:</b> miles × 4 = ${money(minPayByMiles)} minimum. Pay × 2 = ${maxMinutesFor30.toFixed(0)} max minutes.</p>
+  `;
+}
+
+function clearFieldsOnly() {
+  ["pay","miles","minutes","stops","items"].forEach(id => el(id).value = "");
+  apartment = false;
+  updateAptButton();
+}
+
+function clearForNext() {
+  clearFieldsOnly();
+  el("preview").style.display = "none";
+  el("ocr").style.display = "none";
+  el("ocr").textContent = "";
+  el("status").textContent = "";
+  el("result").style.display = "none";
+  el("file").value = "";
+}
+</script>
+</body>
+</html>
