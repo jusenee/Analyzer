@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Spark Analyzer V17 Pickup Buffer</title>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<style>
+*{box-sizing:border-box}
+body{margin:0;padding:14px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f6f7fb;color:#111827}
+.wrap{max-width:500px;margin:0 auto 40px}
+h1{font-size:26px;text-align:center;margin:8px 0 2px}
+.version{text-align:center;font-size:14px;font-weight:900;color:#2563eb;margin-bottom:6px}
+.note,.tiny{font-size:13px;color:#64748b;text-align:center}
+.card{background:#fff;border-radius:22px;padding:16px;margin:14px 0;box-shadow:0 2px 10px rgba(0,0,0,.06)}
+.upload{display:block;border:2px dashed #111827;border-radius:18px;padding:26px;text-align:center;font-weight:1000;background:#111827;color:white;font-size:22px}
+input[type=file]{display:none}
+img{width:100%;max-height:280px;object-fit:contain;border-radius:16px;background:#eef2f7;margin-top:12px}
+.grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+label.small{font-size:11px;font-weight:900;color:#475569;text-transform:uppercase}
+input[type=number]{width:100%;padding:12px 10px;border:1px solid #cbd5e1;border-radius:14px;font-size:18px;font-weight:900;margin-top:4px}
+button{width:100%;border:0;border-radius:16px;padding:15px;font-weight:1000;font-size:16px;background:#111827;color:white;margin-top:10px}
+.secondary{background:#e5e7eb;color:#111827}
+.result{border:3px solid;position:sticky;top:0;z-index:5}
+.take{background:#ecfdf5;border-color:#86efac;color:#065f46}
+.decline{background:#fef2f2;border-color:#fecaca;color:#991b1b}
+.soft{background:#fffbeb;border-color:#facc15;color:#92400e}
+.verdict{font-size:38px;font-weight:1000;margin:0 0 12px;line-height:1}
+.metrics{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.metric{background:rgba(255,255,255,.75);border-radius:16px;padding:12px;border:2px solid transparent}.metricPass{background:#ecfdf5!important;border-color:#86efac!important;color:#065f46!important}.metricFail{background:#fef2f2!important;border-color:#fecaca!important;color:#991b1b!important}
+.metric .k{font-size:11px;font-weight:900;opacity:.75;text-transform:uppercase}
+.metric .v{font-size:20px;font-weight:1000;margin-top:2px}
+.status{text-align:center;font-weight:900;color:#334155}
+.closeResult{position:absolute;top:10px;right:12px;width:auto;margin:0;padding:4px 10px;border-radius:999px;background:rgba(255,255,255,.75);color:inherit;font-size:20px;line-height:1;z-index:10}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>Spark Analyzer</h1>
+<div class="version">VERSION 17 - PICKUP BUFFER</div>
+<p class="note">Real Time only turns on for detail screenshots. Main screenshots use listed time.</p>
+
+<div id="result" class="card result" style="display:none"></div>
+
+<div class="card">
+<label class="upload">📸 Analyze Screenshot<input id="file" type="file" accept="image/*"></label>
+<p class="tiny">Best with one visible offer or detail page. If OCR misses, fix fields manually.</p>
+<img id="preview" style="display:none">
+<p id="status" class="status"></p><p id="modeNotice" class="tiny"></p>
+</div>
+
+<div class="card">
+<h2>Check / Fix Details</h2>
+<div class="grid">
+<div><label class="small">Pay $</label><input id="pay" type="number" step="0.01"></div>
+<div><label class="small">Miles</label><input id="miles" type="number" step="0.1"></div>
+<div><label class="small">Total Mins</label><input id="minutes" type="number" step="1"></div>
+</div>
+<div class="grid" style="margin-top:8px">
+<div><label class="small">Stops</label><input id="stops" type="number" step="1"></div>
+<div><label class="small">Items</label><input id="items" type="number" step="1"></div>
+<div></div>
+</div>
+
+<div class="grid" style="margin-top:8px">
+<div><label class="small">Shopping Mins</label><input id="shoppingMinutes" type="number" step="1" value="15"></div>
+<div><label class="small">Pickup Buffer</label><input id="pickupBuffer" type="number" step="1" value="5"></div>
+<div style="display:flex;align-items:end">
+<label style="font-weight:900;font-size:13px">
+<input id="realMode" type="checkbox" checked style="margin-right:6px">
+Real Time
+</label>
+</div>
+</div>
+
+<button onclick="analyze()">Recalculate</button>
+<button onclick="clearForNext()" class="secondary">Ready for Next Screenshot</button>
+</div>
+</div>
+
+<script>
+let currentResult=null,currentImageData=null,currentScreenshotMode='main',currentOrderType='unknown';
+const el=id=>document.getElementById(id);
+const money=n=>"$"+Number(n).toFixed(2);
+
+el("file").addEventListener("change",async e=>{
+ const file=e.target.files&&e.target.files[0];
+ if(!file)return;
+ await processFile(file);
+ e.target.value="";
+});
+
+["pay","miles","minutes","stops","items","shoppingMinutes","pickupBuffer","realMode"].forEach(id=>{
+ el(id).addEventListener("input",analyze);
+});
+
+function fileToDataURL(file){
+ return new Promise((res,rej)=>{
+  const r=new FileReader();
+  r.onload=()=>res(r.result);
+  r.onerror=rej;
+  r.readAsDataURL(file);
+ });
+}
+
+async function processFile(file){
+ clearFieldsOnly();
+ currentImageData=await fileToDataURL(file);
+
+ const url=URL.createObjectURL(file);
+ el("preview").src=url;
+ el("preview").style.display="block";
+ el("status").textContent="Reading screenshot...";
+
+ try{
+   // Fast path: one OCR pass on uploaded file.
+   const {data}=await Tesseract.recognize(file,"eng");
+   const text=data.text||"";
+   fillFromText(text, data.lines || []);
+   updateRealTimeAvailability();
+   analyze();
+   el("modeNotice").textContent = currentScreenshotMode==="detail"
+     ? "Detail screenshot detected: Real Time available."
+     : "Main screenshot detected: using listed time only.";
+   el("status").textContent="Done. Verify fields if needed.";
+ }catch(err){
+   el("status").textContent="OCR failed. Type numbers manually.";
+ }
+}
+
+function clean(s){
+ return String(s||"")
+ .replace(/[•·|]/g," • ")
+ .replace(/[–—-]/g," • ")
+ .replace(/,/g," , ")
+ .replace(/\s+/g," ")
+ .trim();
+}
+
+function parseTime(s){
+ s=clean(s).toLowerCase();
+ let m=s.match(/(\d+)\s*(?:hr|hrs|hour|hours).*?(\d+)\s*(?:min|mins|minute|minutes)/i);
+ if(m)return parseInt(m[1])*60+parseInt(m[2]);
+ m=s.match(/(\d+)\s*(?:hr|hrs|hour|hours)/i);
+ if(m)return parseInt(m[1])*60;
+ m=s.match(/(\d+)\s*(?:min|mins|minute|minutes)/i);
+ if(m)return parseInt(m[1]);
+ return null;
+}
+
+function formatDuration(totalMinutes){
+ const mins=Math.round(Number(totalMinutes||0));
+ if(mins<60)return `${mins} mins`;
+ const h=Math.floor(mins/60),m=mins%60;
+ return m?`${h} hr ${m} mins`:`${h} hr`;
+}
+
+function parseRoute(s){
+ s=clean(s);
+ let m=s.match(/(\d+)\s*stops?.{0,120}?(\d+(?:\.\d+)?)\s*miles?.{0,120}?((?:\d+\s*(?:hr|hrs|hour|hours).*?)?\d+\s*(?:min|mins|minute|minutes)|\d+\s*(?:hr|hrs|hour|hours))/i);
+ if(!m)m=s.match(/(\d+)\s*stops?.{0,120}?(\d+(?:\.\d+)?)\s*mile\b.{0,120}?((?:\d+\s*(?:hr|hrs|hour|hours).*?)?\d+\s*(?:min|mins|minute|minutes)|\d+\s*(?:hr|hrs|hour|hours))/i);
+ if(!m)return null;
+
+ const minutes=parseTime(m[3]);
+ if(minutes==null)return null;
+
+ return {
+   stops:parseInt(m[1]),
+   miles:parseFloat(m[2]),
+   minutes
+ };
+}
+
+function parseItems(s){
+ const m=clean(s).match(/(\d+)\s*items?/i);
+ return m?parseInt(m[1]):null;
+}
+
+
+function parseShoppingTime(s){
+ const text=clean(s).toLowerCase();
+
+ // Examples:
+ // "17 mins estimated shopping time"
+ // "9 mins estimated shopping time"
+ // "23 mins estimated shopping time"
+ let m=text.match(/(\d+)\s*(?:min|mins|minute|minutes)\s+estimated\s+shopping\s+time/i);
+ if(m)return parseInt(m[1]);
+
+ // Fallback: sometimes OCR splits or adds odd spacing.
+ m=text.match(/(\d+)\s*(?:min|mins|minute|minutes).{0,40}?shopping\s+time/i);
+ if(m)return parseInt(m[1]);
+
+ return null;
+}
+
+function firstPrice(s){
+ const m=String(s||"").match(/\$\s*(\d{1,3}\.\d{2})/);
+ return m?parseFloat(m[1]):null;
+}
+
+
+function lineText(line){
+ return clean(line && line.text ? line.text : "");
+}
+
+function lineY(line, idx){
+ const b = line && line.bbox ? line.bbox : {};
+ if(typeof b.y0 === "number") return b.y0;
+ if(typeof b.y === "number") return b.y;
+ return idx * 20;
+}
+
+function getOCRLines(text, lines){
+ let arr = (lines || []).map((line, idx) => ({
+   text: lineText(line),
+   y: lineY(line, idx)
+ })).filter(x => x.text);
+
+ if(!arr.length){
+   arr = String(text || "").split(/\n+/).map((t, idx) => ({
+     text: clean(t),
+     y: idx * 20
+   })).filter(x => x.text);
+ }
+
+ return arr.sort((a,b) => a.y - b.y);
+}
+
+function parsePriceFromLine(s){
+ const m = String(s || "").match(/\$\s*(\d{1,3}\.\d{2})/);
+ return m ? parseFloat(m[1]) : null;
+}
+
+function parseMainCardByPairs(text, lines){
+ const arr = getOCRLines(text, lines);
+
+ // Find each visible price line. For each price, only look below it until the next price.
+ // This prevents bottom-card pay from being paired with top-card miles/time.
+ for(let i=0; i<arr.length; i++){
+   const pay = parsePriceFromLine(arr[i].text);
+   if(pay === null) continue;
+
+   let chunk = arr[i].text;
+
+   for(let j=i+1; j<arr.length; j++){
+     const nextPay = parsePriceFromLine(arr[j].text);
+     if(nextPay !== null) break;
+
+     // One offer card's route line should be close to the price.
+     if(arr[j].y - arr[i].y > 260) break;
+
+     chunk += " " + arr[j].text;
+
+     const route = parseRoute(chunk);
+     if(route){
+       return {
+         pay,
+         stops: route.stops,
+         miles: route.miles,
+         minutes: route.minutes,
+         items: parseItems(chunk),
+         orderType: detectOrderType(chunk)
+       };
+     }
+   }
+
+   // If this price card didn't produce route info, return pay only
+   // instead of stealing route info from another card.
+   return {
+     pay,
+     stops: null,
+     miles: null,
+     minutes: null,
+     items: null,
+     orderType: detectOrderType(chunk)
+   };
+ }
+
+ return null;
+}
+
+
+function detectOrderType(s){
+ const text=clean(s).toLowerCase();
+ if(/curbside\s+pickup|pickup/.test(text)) return "pickup";
+ if(/shopping|express\s+shopping/.test(text)) return "shopping";
+ return "unknown";
+}
+
+function fillFromText(text, lines){
+ const s=clean(text);
+ currentOrderType = detectOrderType(s);
+ currentScreenshotMode = /estimated\s+total/i.test(s) ? 'detail' : 'main';
+
+ // Detail page: estimated total first.
+ if(currentScreenshotMode === "detail"){
+   const pay=s.match(/estimated\s+total.{0,150}?\$\s*(\d{1,3}\.\d{2})/i);
+   if(pay)el("pay").value=parseFloat(pay[1]).toFixed(2);
+
+   const route=parseRoute(s);
+   if(route){
+     el("stops").value=route.stops;
+     el("miles").value=route.miles;
+     el("minutes").value=route.minutes;
+   }
+
+   const items=parseItems(s);
+   if(items)el("items").value=items;
+
+   const shopTime=parseShoppingTime(s);
+   if(shopTime!==null)el("shoppingMinutes").value=shopTime;
+
+   return;
+ }
+
+ // Main page: pair pay + route within the same visible card.
+ if(el("shoppingMinutes")) el("shoppingMinutes").value=0;
+
+ const main=parseMainCardByPairs(text, lines);
+ if(main){
+   if(main.orderType) currentOrderType = main.orderType;
+   if(main.pay!==null)el("pay").value=main.pay.toFixed(2);
+   if(main.stops!==null)el("stops").value=main.stops;
+   if(main.miles!==null)el("miles").value=main.miles;
+   if(main.minutes!==null)el("minutes").value=main.minutes;
+   if(main.items!==null)el("items").value=main.items;
+   return;
+ }
+}
+
+function hideResult(){
+ el("result").style.display="none";
+}
+
+
+
+function updateRealTimeAvailability(){
+ const cb=el("realMode");
+ const shop=el("shoppingMinutes");
+ if(!cb || !shop) return;
+ const isDetail=currentScreenshotMode==="detail";
+ cb.disabled=!isDetail;
+ shop.disabled=!isDetail;
+ if(!isDetail){
+   cb.checked=false;
+ } else {
+   cb.checked=true;
+ }
+}
+
+function analyze(){
+ const pay=parseFloat(el("pay").value);
+ const miles=parseFloat(el("miles").value);
+ const listedMinutes=parseFloat(el("minutes").value);
+ const shoppingMinutes=parseFloat(el("shoppingMinutes").value||0);
+ const pickupBuffer=parseFloat(el("pickupBuffer").value||0);
+ const realMode=el("realMode").checked && currentScreenshotMode==="detail";
+ const stops=parseFloat(el("stops").value||0);
+ const items=parseFloat(el("items").value||0);
+
+ if(!pay||!miles||!listedMinutes){
+   el("result").style.display="none";
+   currentResult=null;
+   return null;
+ }
+
+ let finalMinutes=listedMinutes;
+ let timeNote="";
+
+ if(realMode){
+   const travelMinutes=Math.max(0, listedMinutes - shoppingMinutes);
+   finalMinutes=shoppingMinutes + (travelMinutes * 2);
+   timeNote=`Detail screenshot • Listed ${formatDuration(listedMinutes)} • Shop ${shoppingMinutes} mins • Return drive added`;
+ } else {
+   finalMinutes=listedMinutes;
+   timeNote=currentScreenshotMode==="detail" ? `Detail screenshot • Real Time OFF • Using listed time` : `Main screenshot • Using listed time`;
+ }
+
+ // Pickup/curbside cushion for scanning and loading.
+ if(currentOrderType==="pickup" && pickupBuffer>0){
+   finalMinutes += pickupBuffer;
+   timeNote += ` • +${pickupBuffer} min pickup buffer`;
+ }
+
+ const rtMiles=miles*2;
+ const rtPerMile=pay/rtMiles;
+ const hourly=pay/(finalMinutes/60);
+
+ const passHourly=hourly>=30;
+ const passRtMile=rtPerMile>=2;
+ const passLocal=miles<=5;
+ const passPayRule=pay>=miles*4;
+
+ let verdict="DECLINE";
+ let cls="decline";
+
+ if(passPayRule && passHourly && passLocal){
+   verdict="TAKE";
+   cls="take";
+ } else if(passHourly && miles<=7 && passPayRule){
+   verdict="SOFT YES";
+   cls="soft";
+ }
+
+ currentResult={
+  date:new Date().toLocaleString(),
+  pay,
+  miles,
+  minutes:finalMinutes,
+  listedMinutes,
+  shoppingMinutes,
+  pickupBuffer,
+  realMode,
+  orderType:currentOrderType,
+  stops,
+  items,
+  rtMiles,
+  rtPerMile,
+  hourly,
+  verdict,
+  screenshot:currentImageData
+ };
+
+ el("result").className="card result "+cls;
+ el("result").style.display="block";
+ el("result").innerHTML=`
+ <button type="button" class="closeResult" onclick="hideResult()">×</button>
+ <p class="verdict">${verdict}</p>
+ <div class="metrics">
+  <div class="metric ${passLocal ? 'metricPass' : 'metricFail'}"><div class="k">RT Miles</div><div class="v">${rtMiles.toFixed(1)}</div></div>
+  <div class="metric ${passRtMile ? 'metricPass' : 'metricFail'}"><div class="k">RT $/Mile</div><div class="v">${money(rtPerMile)}</div></div>
+  <div class="metric ${passHourly ? 'metricPass' : 'metricFail'}"><div class="k">Hourly</div><div class="v">${money(hourly)}/hr</div></div>
+  <div class="metric ${passHourly ? 'metricPass' : 'metricFail'}"><div class="k">Real Time</div><div class="v">${formatDuration(finalMinutes)}</div></div>
+ </div>
+ <div style="margin-top:10px;font-size:12px;font-weight:700;opacity:.75">
+ ${timeNote}
+ </div>`;
+ return currentResult;
+}
+
+function clearFieldsOnly(){
+ ["pay","miles","minutes","stops","items"].forEach(id=>el(id).value="");
+ currentResult=null;
+}
+
+function clearForNext(){
+ clearFieldsOnly();
+ el("preview").style.display="none";
+ el("result").style.display="none";
+ el("status").textContent="";
+ el("modeNotice").textContent="";
+}
+</script>
+</body>
+</html>
