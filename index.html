@@ -3,8 +3,9 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Spark Analyzer V17.2 Calibrated Thresholds</title>
-<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<title>Spark Analyzer V17.3 Simple Save Log</title>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js">renderSimpleLog();
+</script>
 <style>
 *{box-sizing:border-box}
 body{margin:0;padding:14px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f6f7fb;color:#111827}
@@ -32,12 +33,17 @@ button{width:100%;border:0;border-radius:16px;padding:15px;font-weight:1000;font
 .metric .v{font-size:20px;font-weight:1000;margin-top:2px}
 .status{text-align:center;font-weight:900;color:#334155}
 .closeResult{position:absolute;top:10px;right:12px;width:auto;margin:0;padding:4px 10px;border-radius:999px;background:rgba(255,255,255,.75);color:inherit;font-size:20px;line-height:1;z-index:10}
+
+.saveRow{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}
+.logItem{background:#f8fafc;border:1px solid #e5e7eb;border-radius:14px;padding:10px;margin-top:8px;font-size:14px}
+.logTiny{font-size:12px;color:#64748b;margin-top:4px}
+
 </style>
 </head>
 <body>
 <div class="wrap">
 <h1>Spark Analyzer</h1>
-<div class="version">VERSION 17.2 - CALIBRATED THRESHOLDS</div>
+<div class="version">VERSION 17.3 - SIMPLE SAVE LOG</div>
 <p class="note">Real Time only turns on for detail screenshots. Main screenshots use listed time.</p>
 
 <div id="result" class="card result" style="display:none"></div>
@@ -75,6 +81,22 @@ Real Time
 
 <button onclick="analyze()">Recalculate</button>
 <button onclick="clearForNext()" class="secondary">Ready for Next Screenshot</button>
+</div>
+
+<div class="card">
+<h2>Save This Order?</h2>
+<div class="saveRow">
+<button class="green" onclick="saveSimpleOrder('TAKEN')">Yes, I took it</button>
+<button class="red" onclick="saveSimpleOrder('SKIPPED')">No, I skipped it</button>
+</div>
+<p id="saveStatus" class="status"></p>
+</div>
+
+<div class="card">
+<h2>Simple Log</h2>
+<div id="simpleSummary" class="summaryMetrics"></div>
+<div id="simpleLog"></div>
+<button onclick="clearSimpleLog()" class="secondary">Clear Simple Log</button>
 </div>
 </div>
 
@@ -467,6 +489,76 @@ function analyze(){
  return currentResult;
 }
 
+
+function getSimpleLog(){
+ try{return JSON.parse(localStorage.getItem("sparkSimpleLogV17_3")||"[]")}
+ catch{return[]}
+}
+
+function setSimpleLog(log){
+ localStorage.setItem("sparkSimpleLogV17_3", JSON.stringify(log));
+ renderSimpleLog();
+}
+
+function saveSimpleOrder(status){
+ const result = analyze();
+ if(!result){
+   el("saveStatus").textContent = "Fill pay, miles, and time first.";
+   return;
+ }
+
+ const entry = {
+   id: Date.now(),
+   date: new Date().toLocaleString(),
+   status,
+   verdict: result.verdict,
+   pay: result.pay,
+   miles: result.miles,
+   minutes: result.minutes,
+   rtMiles: result.rtMiles,
+   rtPerMile: result.rtPerMile,
+   hourly: result.hourly
+ };
+
+ const log = getSimpleLog();
+ log.unshift(entry);
+ setSimpleLog(log);
+
+ el("saveStatus").textContent = status === "TAKEN" ? "Saved: Took this order." : "Saved: Skipped this order.";
+}
+
+function renderSimpleLog(){
+ const log = getSimpleLog();
+ const taken = log.filter(x=>x.status==="TAKEN");
+ const skipped = log.filter(x=>x.status==="SKIPPED");
+ const totalTakenPay = taken.reduce((sum,x)=>sum+Number(x.pay||0),0);
+
+ if(el("simpleSummary")){
+   el("simpleSummary").innerHTML = `
+   <div class="metric"><div class="k">Saved</div><div class="v">${log.length}</div></div>
+   <div class="metric"><div class="k">Taken</div><div class="v">${taken.length}</div></div>
+   <div class="metric"><div class="k">Skipped</div><div class="v">${skipped.length}</div></div>
+   <div class="metric"><div class="k">Taken Pay</div><div class="v">${money(totalTakenPay)}</div></div>
+   `;
+ }
+
+ if(el("simpleLog")){
+   el("simpleLog").innerHTML = log.slice(0,20).map(x=>`
+     <div class="logItem">
+       <b>${x.status}</b> • ${x.verdict} • ${money(x.pay)} • ${x.miles} mi • ${formatDuration(x.minutes)} • ${money(x.hourly)}/hr
+       <div class="logTiny">${x.date} • RT ${Number(x.rtMiles).toFixed(1)} mi • ${money(x.rtPerMile)}/RT mi</div>
+     </div>
+   `).join("");
+ }
+}
+
+function clearSimpleLog(){
+ if(confirm("Clear saved simple log?")){
+   localStorage.removeItem("sparkSimpleLogV17_3");
+   renderSimpleLog();
+ }
+}
+
 function clearFieldsOnly(){
  ["pay","miles","minutes","stops","items"].forEach(id=>el(id).value="");
  currentResult=null;
@@ -477,8 +569,10 @@ function clearForNext(){
  el("preview").style.display="none";
  el("result").style.display="none";
  el("status").textContent="";
+ if(el("saveStatus")) el("saveStatus").textContent="";
  el("modeNotice").textContent="";
 }
+renderSimpleLog();
 </script>
 </body>
 </html>
