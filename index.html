@@ -1024,6 +1024,7 @@ button{width:100%;border:0;border-radius:16px;padding:15px;font-weight:1000;font
 <button type="button" class="scrollTopBtn" onclick="scrollToTopSmooth()">↑</button>
 </div>
 <button type="button" class="archiveBtn" onclick="showArchivePage()">Reporting Center</button>
+<button type="button" class="secondary" onclick="exportStorageDiagnostic()" style="margin-top:12px">Storage Diagnostic</button>
 <button type="button" id="clearLogBtn" class="secondary" onclick="clearSimpleLog()" style="margin-top:12px">Clear Simple Log</button>
 </div>
 </div>
@@ -1832,6 +1833,30 @@ function downloadTextFile(filename,text,type){
  a.click();
  a.remove();
  setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+ function exportStorageDiagnostic(){
+  const rows=[];
+
+  for(let i=0;i<localStorage.length;i++){
+    const key=localStorage.key(i);
+    const value=localStorage.getItem(key)||"";
+    rows.push(key+" | "+value.length+" characters");
+  }
+
+  rows.sort();
+
+  const report=
+    "Spark Analyzer Storage Diagnostic\n"+
+    "URL: "+location.href+"\n"+
+    "Origin: "+location.origin+"\n"+
+    "Keys found: "+rows.length+"\n\n"+
+    (rows.length?rows.join("\n"):"NO LOCALSTORAGE KEYS FOUND");
+
+  downloadTextFile(
+    "spark_storage_diagnostic.txt",
+    report,
+    "text/plain"
+  );
 }
 function getPastWeeksLog(){
  return getSimpleLog().filter(x=>!isCurrentWeekEntry(x));
