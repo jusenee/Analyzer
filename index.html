@@ -1436,8 +1436,68 @@ function initAppBindings(){
 }
 
 
-function getSimpleLog(){try{return JSON.parse(localStorage.getItem("sparkSimpleLogV19_1")||localStorage.getItem("sparkSimpleLogV19")||localStorage.getItem("sparkSimpleLogV18_23")||localStorage.getItem("sparkSimpleLogV17_3")||"[]")}catch{return[]}}
-function setSimpleLog(log){localStorage.setItem("sparkSimpleLogV19_1",JSON.stringify(log));renderSimpleLog()}
+function getSimpleLog(){
+  try{
+    const MASTER_KEY="sparkAnalyzerMasterLog";
+    const OLD_KEYS=[
+      "sparkSimpleLogV19_1",
+      "sparkSimpleLogV19",
+      "sparkSimpleLogV18_23",
+      "sparkSimpleLogV17_3"
+    ];
+
+    let master=[];
+    try{
+      master=JSON.parse(localStorage.getItem(MASTER_KEY)||"[]");
+      if(!Array.isArray(master)) master=[];
+    }catch(e){
+      master=[];
+    }
+
+    let combined=[...master];
+
+    OLD_KEYS.forEach(key=>{
+      try{
+        const data=JSON.parse(localStorage.getItem(key)||"[]");
+        if(Array.isArray(data)) combined.push(...data);
+      }catch(e){}
+    });
+
+    const seen=new Set();
+
+    combined=combined.filter(entry=>{
+      if(!entry || typeof entry!=="object") return false;
+
+      const fingerprint=entry.id
+        ? "id:"+entry.id
+        : JSON.stringify(entry);
+
+      if(seen.has(fingerprint)) return false;
+      seen.add(fingerprint);
+      return true;
+    });
+
+    combined.sort((a,b)=>{
+      const aTime=new Date(a.date||0).getTime()||0;
+      const bTime=new Date(b.date||0).getTime()||0;
+      return bTime-aTime;
+    });
+
+    if(combined.length){
+      localStorage.setItem(MASTER_KEY,JSON.stringify(combined));
+    }
+
+    return combined;
+  }catch(e){
+    return [];
+  }
+}
+function setSimpleLog(log){
+  try{
+    if(!Array.isArray(log)) log=[];
+    localStorage.setItem("sparkAnalyzerMasterLog",JSON.stringify(log));
+  }catch(e){}
+}
 function saveSimpleOrder(status){
  const r=analyze(); if(!r){el("saveStatus").textContent="Fill pay, miles, and time first.";return}
  const entry={id:Date.now(),date:new Date().toISOString(),status,verdict:r.verdict,pay:r.pay,miles:r.miles,minutes:r.minutes,listedMinutes:r.listedMinutes,shoppingMinutes:r.shoppingMinutes,returnDriveAdded:r.returnDriveAdded||0,pickupBuffer:r.pickupBuffer||0,rtMiles:r.rtMiles,rtPerMile:r.rtPerMile,hourly:r.hourly,dayMode:r.dayMode||activeDayMode,orderType:r.orderType||currentOrderType||((Number(r.shoppingMinutes||0)>0)?"shopping":"pickup"),gigApp:(el("gigApp")?el("gigApp").value:"Spark")};
